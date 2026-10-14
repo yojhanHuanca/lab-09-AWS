@@ -1,0 +1,1 @@
+{"name":"lumen-s3-lab09","version":"1.0.0","private":true,"type":"module","engines":{"node":">=22"},"scripts":{"start":"node server.js","dev":"node --watch server.js","test":"node --test test/*.test.js"},"dependencies":{"express":"^5.2.1","@aws-sdk/client-s3":"^3.0.0","@aws-sdk/s3-request-presigner":"^3.0.0"}}
