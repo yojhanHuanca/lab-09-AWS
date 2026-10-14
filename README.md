@@ -1,49 +1,113 @@
-# Lumen Gallery Semana 9
+# Lumen Gallery — Lab 09 AWS
 
-Galería local del ejercicio 4. Express y AWS SDK v3 generan URLs prefirmadas; el navegador envía cada imagen directamente a S3.
+Galería de imágenes privada con **presigned URLs** (Express + AWS SDK v3). El navegador sube/descarga directamente a S3; el backend solo firma URLs temporales.
+
+## Demo
+
+[![Lumen Gallery Demo](https://img.youtube.com/vi/ug-LJSuGXh8/maxresdefault.jpg)](https://youtu.be/ug-LJSuGXh8)
+
+> Click en la imagen para ver el video en YouTube
+
+## Stack
+
+- **Backend**: Node 22, Express 5, `@aws-sdk/client-s3`, `@aws-sdk/s3-request-presigner`
+- **Frontend**: Vanilla JS (ESM), CSS custom properties
+- **Tests**: `node:test`
+
+## Requisitos
+
+- Node.js ≥ 22
+- Cuenta AWS con bucket S3 privado
+- Credenciales configuradas (perfil local o `.env`)
+
+## Configuración
+
+```bash
+cd "C:\Users\USER\OneDrive\Documentos\ChatGPT\lab-02\semana 9"
+cp .env.example .env
+# Edita .env con tu bucket y región
+npm install
+```
+
+### `.env`
+
+```env
+S3_BUCKET=tu-bucket
+AWS_REGION=us-east-1
+PORT=3009
+APP_URL=http://localhost:3009
+```
+
+### CORS del bucket (Permissions → CORS)
+
+```json
+[
+  {
+    "AllowedHeaders": ["*"],
+    "AllowedMethods": ["PUT", "GET", "HEAD"],
+    "AllowedOrigins": ["http://localhost:3009"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3000
+  }
+]
+```
 
 ## Ejecutar
 
-Requiere Node.js 22 o superior. En PowerShell:
-
-```powershell
-cd "C:\Users\USER\OneDrive\Documentos\ChatGPT\lab-02\semana 9"
-npm install
-npm start
+```bash
+npm start      # producción
+npm run dev    # --watch
+npm test       # pruebas
 ```
 
-Abrir http://localhost:3009. Para desarrollo: `npm run dev`. Para pruebas: `npm test`.
+Abre **http://localhost:3009**
 
-## AWS
+## Endpoints
 
-El `.env` local ya contiene región us-east-1 y bucket lab-09-yhuanca-20261014. Las credenciales se resuelven mediante el perfil AWS local o variables del servidor; nunca están en public/. Para otro equipo copia `.env.example` a `.env`. Si usas un perfil distinto del predeterminado, configura `AWS_PROFILE`. AWS Academy también requiere `AWS_SESSION_TOKEN` vigente.
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/api/upload-url` | Genera presigned PUT (5 min) |
+| POST | `/api/uploads/complete` | Verifica magia/tamaño tras subir |
+| GET | `/api/images` | Lista imágenes con presigned GET (15 min) |
+| GET | `/api/download?key=` | Presigned GET para descarga (5 min) |
+| DELETE | `/api/images/:key` | Elimina objeto |
 
-La identidad necesita ListBucket para el bucket, GetObject/PutObject/DeleteObject para originales/*. HeadObject utiliza GetObject. No necesita s3:* ni acceso público. Mantén Block Public Access, SSE-S3 y la política que exige HTTPS.
+## Validaciones
 
-En Permissions → CORS del bucket, agregar o combinar esta regla con las existentes:
+- **Frontend**: tipo (JPG/PNG/WebP), tamaño (< 5 MB)
+- **Backend**: mismo + magic bytes (JPEG: `FF D8 FF`, PNG: `89 50 4E 47 0D 0A 1A 0A`, WebP: `RIFF....WEBP`)
+- **Seguridad**: rate limit 30 req/min/IP, CSP, CORS origin check, sanitización de nombres, sin credenciales en cliente
+
+## Arquitectura
+
+```
+Navegador → POST /api/upload-url → Backend → Presigned PUT URL
+Navegador → PUT directo a S3 (archivo nunca pasa por backend)
+```
+
+## IAM Role para EC2 (sin credenciales en .env)
 
 ```json
-[{"AllowedHeaders":["content-type","x-amz-*"],"AllowedMethods":["PUT","GET","HEAD"],"AllowedOrigins":["http://localhost:3009"],"ExposeHeaders":["ETag"],"MaxAgeSeconds":300}]
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": ["s3:PutObject","s3:GetObject","s3:DeleteObject","s3:ListBucket"],
+    "Resource": ["arn:aws:s3:::tu-bucket","arn:aws:s3:::tu-bucket/originales/*"]
+  }]
+}
 ```
+Adjunta el role a la instancia EC2. El SDK usa IMDSv2 automáticamente.
 
-## Funciones y endpoints
+## Pruebas obligatorias
 
-- POST /api/upload-url: nombre, contentType y sizeBytes; URL PUT de 5 minutos. Solo JPG, PNG, WebP con 0 < tamaño < 5 MiB. Firma tipo y longitud.
-- POST /api/uploads/complete: ticket de carga; comprueba tamaño y ContentType mediante HeadObject y magic bytes con lectura parcial. Retira cargas inválidas mediante DeleteObject (con versionado, las versiones siguen conservadas en S3).
-- GET /api/images: listado paginado de originales/ con URLs de 15 minutos. Omite carpetas, extensiones ajenas y objetos diminutos; objetos previos al proyecto no se analizan íntegramente al listar.
-- GET /api/download?key=...: descarga directa privada con URL de 5 minutos.
-- DELETE /api/images/:key: clave codificada con encodeURIComponent; eliminación recuperable si S3 tiene versionado.
-- Vista previa ampliada, descarga, filtros, búsqueda, ordenamiento, selección múltiple, arrastrar y soltar y progreso de subida.
+1. Subir JPG válida → aparece en galería
+2. Intentar PDF/EXE → bloqueado en frontend
+3. Enviar 10 MB a `/api/upload-url` → 400 backend
+4. Abrir URL de vista a los 16 min → expirada
+5. Inspeccionar Network → PUT va a `*.amazonaws.com`, no al backend
+6. Verificar que no hay credenciales AWS en `public/`
 
-## Pruebas para el entregable
+## Licencia
 
-1. Subir JPG válida y verificar vista previa y descarga.
-2. Intentar PDF o EXE: bloqueo en frontend.
-3. Enviar sizeBytes de 10485760 a /api/upload-url: respuesta 400 del servidor.
-4. Abrir una URL de visualización después de 16 minutos: comprobar expiración real.
-5. Inspeccionar public/ y solicitudes: no contienen credenciales AWS; la URL prefirmada contiene una autorización temporal, no la clave secreta.
-6. En Network comprobar PUT al dominio S3 y POST pequeños al backend.
-
-## Límites
-
-Aplicación para uso local, enlazada a 127.0.0.1. No se debe exponer en internet sin autenticación y autorización de usuarios. El límite de escritura es 30 solicitudes por minuto e IP; los tickets de validación son temporales y viven en memoria. La validación de firma de archivo no sustituye antivirus ni decodificación completa. No compartir URLs prefirmadas. No publicar .env ni ~/.aws/credentials. Las transiciones lifecycle y la recuperación del ejercicio 3 se configuran en AWS, no desde esta galería.
+MIT
